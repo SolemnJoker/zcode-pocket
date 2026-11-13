@@ -272,3 +272,42 @@ tracked as issues rather than promised away.
 **Cost**: older desktop versions may stay broken longer; issue reports are
 the main coverage for other environments — the bug report template asks for
 the app version, the device, and the ZCode desktop version.
+
+## 26. New-file previews cover markdown and plain text, still diff-only for edits
+
+**Problem**: decision #12 restricted preview to newly created HTML files
+because the new-file full text is the only content the protocol volunteers.
+Users who ask the agent for markdown reports (a very common deliverable) get
+a diff card instead of a document.
+**Decision**: the same zero-cost path now routes by extension — new-file
+markdown renders with the in-app markdown engine (same styling as chat
+messages), new-file text/code renders on a monospace text page with
+copy-all; known-binary extensions and NUL-sniffed content never enter the
+text page. Edited files keep going to the diff viewer; nothing here reads
+arbitrary file bytes.
+**Cost**: binary extensions need updating as formats appear; very large
+markdown files (>512 KB) degrade to the text page rather than blocking the
+parser.
+
+## 27. Binary artifacts reach the phone as agent-chunked base64
+
+**Problem**: the protocol has no read-by-path byte channel (#12), so a
+Word/Excel/PDF file the agent just wrote cannot be downloaded by the phone —
+yet opening it with a phone-side app (WPS and friends) is the natural way to
+consume it, and the user is often not in front of the desktop to fetch it.
+**Decision**: the phone sends a fixed-format instruction; the agent writes
+the file into the workspace as base64 chunks under `.zp-transfer/<id>/`
+(≤128 KiB decoded per chunk, no "=" padding except the tail); the chunks
+arrive on the existing fileChanges channel as new-file diffs — no model
+context, no quota — where the phone reassembles (per-chunk decode,
+contiguity check), saves into its private downloads directory, and hands
+the file to the system open-with chooser via a FileProvider. Workflow
+artifacts keep the direct `workflowRunArtifactRead` byte channel (≤32 MiB)
+with no agent involvement. A completion/failure marker
+(`ZP-TRANSFER-OK/FAIL <id> …`) scans assistant text only, so the instruction
+itself can never trigger it.
+**Cost**: a transfer costs about one ordinary tool-call round of agent
+quota; the single-file cap is 20 MiB; the per-file diff size limits on the
+desktop side are untested and may need chunk-size tuning on real devices
+(design notes: `docs/file-transfer-design.md`); missing markers or chunks
+fail honestly with a retry instead of guessing.

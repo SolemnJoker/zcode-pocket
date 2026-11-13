@@ -66,7 +66,13 @@ https://github.com/user-attachments/assets/4e81ba59-6d69-4316-a5fc-67955c261c47
 - Input: persistent drafts (isolated per computer/account/workspace/
   conversation), offline send queue, attachments, screenshot annotation,
   voice input (system recognizer)
-- Workflows: run catalog and artifact viewing (text/HTML preview)
+- Artifacts: newly created HTML/Markdown/text files preview right in the
+  turn card (zero quota); markdown/text workflow artifacts render for
+  reading; image artifacts zoom & pan; binary artifacts (Word/Excel/PDF/
+  ZIP …) can be "sent to phone" (agent-chunked base64 relay, see
+  docs/file-transfer-design.md) and opened with WPS or other phone apps
+- Workflows: run catalog and artifact viewing (text/HTML/Markdown preview,
+  image viewing, binary artifacts saved and opened)
 - Usage: subscription usage, heatmap (total / per-model), daily and
   per-model breakdowns and trends
 - Appearance: light/dark themes, Chinese/English UI, foldable-unfolded and
@@ -219,9 +225,13 @@ status and workaround.
 - Portrait is the only main orientation; wide screens and foldables unfolded
   (≥600dp) use a dual-pane layout (task list + conversation); the
   large-tablet layout is still being polished.
-- No built-in image/PDF preview — the remote-control protocol has no
-  file-byte channel; only newly created HTML files can be previewed. View
-  other files on the desktop.
+- File preview covers only files **newly created in the current turn**
+  (HTML/Markdown/text — their full text arrives with the change record);
+  edited files go to the diff view. No built-in image/PDF preview — Word/
+  Excel/PDF/ZIP and other binary artifacts travel via "send to phone"
+  (agent-chunked base64 relay, about one ordinary tool call of quota,
+  single file ≤20MB) and open with WPS or other phone apps; see
+  docs/file-transfer-design.md.
 - QR pairing shows a static viewfinder instead of a live camera preview
   (a renderer workaround for some devices), and the screen rebuilds once
   after a successful pairing.

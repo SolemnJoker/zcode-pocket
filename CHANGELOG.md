@@ -3,6 +3,36 @@
 本文件记录用户可感知的版本变化与升级注意事项。格式参考 Keep a Changelog；
 版本语义为 SemVer，build 码为 `YYYYMMDDNN`，发布窗口内打 `v<版本>` tag。
 
+## [Unreleased]
+
+产物预览与传输版本（preview-kind-1 / transfer-1）。fork 分支
+`feature/artifact-preview-and-transfer`。
+
+### Added
+
+- 文件预览扩展：本轮**新建**的 Markdown 文件在文件变更卡片内渲染预览
+  （样式与对话消息同源，代码块语法高亮跟随设置开关）；新建的文本/代码
+  文件进入带「复制全文」的等宽文本页；行内新增可预览角标——预览不再
+  只能盲点。编辑过的文件仍进 diff 视图（协议只送变更片段）。
+- 「传到手机」：word/excel/pdf/压缩包等二进制产物可传输到手机后用
+  WPS 等应用打开——手机端自动发一条传输指令，agent 把文件 base64
+  分块写入工作区临时目录（全文随变更记录直达手机：不进模型上下文、
+  约一轮普通工具调用额度），手机端校验分块连续性、解码落盘到应用
+  私有 downloads/ 并调起系统「用其他应用打开」选择器。单文件 ≤20MB，
+  带完成/失败标记、超时与分块缺失校验（诚实失败可重试）。设计文档：
+  docs/file-transfer-design.md。
+- 工作流产物：markdown 产物进渲染页；word/excel/pdf/压缩包等二进制
+  产物直接经产物字节通道（零额度）落盘并调起外部应用（≤32MB）；
+  图片预览页新增「用其他应用打开」。
+- ::visualize 可视化卡对 markdown/文本引用同样渲染（此前只走 HTML）。
+
+### Changed
+
+- 已知限制更新：图片/PDF 预览限制改为「经传到手机打开」路径说明
+  （README 中英双语、docs/decisions.md #26/#27）。
+- 构建基建：Android Gradle Plugin 9.1.0 → 9.1.1（Flutter 3.50 的最低
+  AGP 要求；SDK 升级跟随）。
+
 ## [1.0.4] - 2026-11-12
 
 反馈修复与本地隐私增强版本。

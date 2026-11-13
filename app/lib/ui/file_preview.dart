@@ -6,6 +6,8 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../core/localized_text.dart';
 import '../core/theme.dart';
 import '../state/app_state_scope.dart';
+import 'app_widgets.dart' show CopyIconButton;
+import 'markdown_view.dart';
 
 /// 生成文件预览·网页档（file-preview-1，2026-10-29 用户拍板「只做 html
 /// 的部分」）：官方协议无任意文件字节读取通道（zcode-protocol-v4
@@ -20,6 +22,55 @@ import '../state/app_state_scope.dart';
 final _htmlExtRe = RegExp(r'\.(html?|xhtml)$', caseSensitive: false);
 
 bool isRenderableHtmlPath(String path) => _htmlExtRe.hasMatch(path.trim());
+
+/// 产物预览档位（preview-kind-1，2026-11-13）：协议无按路径读文件字节
+/// 的通道，唯一原生可达路径仍是「新建文件全文随 fileChanges 到达」
+/// （file-preview-1）。在此之上把可预览面从 html 扩到 markdown 与
+/// 常见文本档——同样零提示词零额度；二进制档（office/pdf/压缩包/图片
+/// 等）不进文本渲染，走「传到手机」（transfer-1，见 transfer/）。
+enum FilePreviewKind { html, markdown, text, none }
+
+final _mdExtRe = RegExp(r'\.(md|markdown)$', caseSensitive: false);
+
+bool isMarkdownPath(String path) => _mdExtRe.hasMatch(path.trim());
+
+/// 已知二进制扩展（这些档不试文本预览；图片档虽二进制，但其查看走
+/// 工作流产物的字节通道或在桌面对话中看，fileChanges 拿不到内容）。
+final _binaryExtRe = RegExp(
+  r'\.(docx?|xlsx?|xlsm|pptx?|pdf|zip|7z|rar|gz|tgz|tar|bz2|xz|dmg|iso|img'
+  r'|exe|dll|so|dylib|bin|apk|jar|class|pyc|wasm|o|a|lib'
+  r'|png|jpe?g|gif|webp|bmp|ico|tiff?|avif|heic'
+  r'|mp3|wav|flac|ogg|m4a|aac|mp4|mov|avi|mkv|webm|flv'
+  r'|ttf|otf|woff2?|eot'
+  r'|psd|ai|sketch|fig|xd|blend|obj|fbx|glb|gltf|stl'
+  r'|sqlite3?|db|db3|parquet|pkl|pickle|npy|npz|h5|hdf5|pt|onnx|ckpt|safetensors'
+  r'|woff|ds_store|lockb)$',
+  caseSensitive: false,
+);
+
+/// 档位判定：html → markdown → 已知二进制 none → 其余一律按 text
+/// （宽容未知扩展的纯文本档，如 Makefile/无扩展脚本）。text 档最终
+/// 能否渲染仍由 assembleNewFileText 是否拿到全文决定（编辑过的文件
+/// 只送变更片段，宁进 diff 也不渲染半份内容）。
+FilePreviewKind filePreviewKindFor(String path) {
+  final p = path.trim();
+  if (isRenderableHtmlPath(p)) return FilePreviewKind.html;
+  if (isMarkdownPath(p)) return FilePreviewKind.markdown;
+  if (_binaryExtRe.hasMatch(p.toLowerCase())) return FilePreviewKind.none;
+  return FilePreviewKind.text;
+}
+
+/// 已知二进制扩展名判定（公开给工作流产物的保存/打开路由使用；
+/// 手机端文件行走 [filePreviewKindFor] 的 none 档）。
+bool isKnownBinaryPath(String path) =>
+    _binaryExtRe.hasMatch(path.trim().toLowerCase());
+
+/// 文本档兜底嗅探：二进制误入（未知扩展）时前 1KiB 大概率出现 NUL
+/// 字节——命中即拒绝渲染（防整页替换符花屏）。
+bool looksLikeBinaryText(String content) {
+  final head = content.length > 1024 ? content.substring(0, 1024) : content;
+  return head.contains('\u0000');
+}
 
 /// 把 fileChanges 的只读 hunk 拼成「新建文件全文」：仅当全部行都是新增
 /// 行（本轮新建/整文件重写）时成立；出现删除行（编辑）或无行 → null
@@ -157,13 +208,13 @@ class _VisualizeCardState extends State<VisualizeCard> {
         );
         return;
       }
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => HtmlPreviewPage(
-            title: widget.path.split(RegExp(r'[\\/]')).last,
-            htmlContent: full,
-          ),
-        ),
+      // preview-kind-1：路由收敛到统一入口（html/md/文本按扩展分发；
+      // ::visualize 引用的多为 html，md/文本引用同样正确渲染）。
+      openGeneratedFilePreview(
+        context,
+        title: widget.path.split(RegExp(r'[\\/]')).last,
+        path: widget.path,
+        content: full,
       );
     } catch (e) {
       if (mounted) _snack('读取失败：$e');
@@ -405,6 +456,144 @@ class _HtmlPreviewPageState extends State<HtmlPreviewPage> {
                   ),
               ],
             ),
+    );
+  }
+}
+
+// ------------------------------------------------------------ markdown / 文本预览页
+// （preview-kind-1，2026-11-13 用户需求「在 app 中查看工作的产物」：
+//   新建 markdown/纯文本文件的全文同样随 fileChanges 到达——本地渲染，
+//   零提示词零额度；路由入口见 [openGeneratedFilePreview]。）
+
+/// markdown 大文降级阈值：flutter_markdown 解析 O(n) 但长文一次构建
+/// 全量 widget 树，>512KB（约 40 万字）首帧可感卡顿——降级纯文本页
+/// （内容可读性不丢，只是没有排版）。
+const markdownPreviewMaxChars = 512 * 1024;
+
+/// 统一预览路由（file-preview-1 的 _openViewer 分支与 ::visualize 卡、
+/// 工作流产物共用）：按扩展档位把「新建文件全文」送进对应渲染页。
+/// 返回 false=该档位不可渲染（二进制/嗅探命中 NUL）或全文为空，
+/// 调用方落 diff/纯文本视图。
+bool openGeneratedFilePreview(
+  BuildContext context, {
+  required String title,
+  required String path,
+  required String content,
+}) {
+  final kind = filePreviewKindFor(path);
+  if (kind == FilePreviewKind.none) return false;
+  if (content.isEmpty || looksLikeBinaryText(content)) return false;
+  switch (kind) {
+    case FilePreviewKind.html:
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => HtmlPreviewPage(title: title, htmlContent: content),
+        ),
+      );
+      return true;
+    case FilePreviewKind.markdown:
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => content.length > markdownPreviewMaxChars
+              // 降级纯文本：长文不做 markdown 解析（见阈值注释）。
+              ? TextFilePreviewPage(title: title, content: content)
+              : MarkdownFilePreviewPage(title: title, content: content),
+        ),
+      );
+      return true;
+    case FilePreviewKind.text:
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => TextFilePreviewPage(title: title, content: content),
+        ),
+      );
+      return true;
+    case FilePreviewKind.none:
+      return false;
+  }
+}
+
+/// markdown 文件预览页：渲染样式与对话消息同源（复用 MarkdownView，
+/// 含代码高亮开关与本地链接处理）。
+class MarkdownFilePreviewPage extends StatelessWidget {
+  final String title;
+  final String content;
+
+  const MarkdownFilePreviewPage({
+    super.key,
+    required this.title,
+    required this.content,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final highlightOn = AppStateScope.of(context).uiPrefs.codeHighlightEnabled;
+    return Scaffold(
+      backgroundColor: context.colors.background,
+      appBar: AppBar(
+        backgroundColor: context.colors.background,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          title,
+          translate: false,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+        child: MarkdownView(data: content, codeHighlightEnabled: highlightOn),
+      ),
+    );
+  }
+}
+
+/// 纯文本文件预览页（等宽只读+一键复制全文）。
+/// 对话/工作流产物共用（原 workflow_runs_page 私有 _ArtifactTextPage
+/// 晋升公共页，视觉规格不变）。
+class TextFilePreviewPage extends StatelessWidget {
+  final String title;
+  final String content;
+
+  const TextFilePreviewPage({
+    super.key,
+    required this.title,
+    required this.content,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: context.colors.background,
+      appBar: AppBar(
+        backgroundColor: context.colors.background,
+        surfaceTintColor: Colors.transparent,
+        title: Text(
+          title,
+          translate: false,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          CopyIconButton(
+            text: content,
+            tooltip: tr('复制全文'),
+            snackText: '全文已复制',
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: SelectableText(
+          content,
+          style: const TextStyle(
+            fontSize: AppType.uiCaption,
+            fontFamily: 'monospace',
+            height: 1.5,
+          ),
+        ),
+      ),
     );
   }
 }

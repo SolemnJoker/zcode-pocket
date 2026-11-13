@@ -925,6 +925,45 @@ const _customEn = <String, String>{
   '该产物没有可读的内容': 'This artifact has no readable content',
   '图片解码失败：该格式不受支持':
       'Image decoding failed: this format is not supported',
+  // ---- preview-kind-1：markdown/文本文件预览（2026-11-13）。
+  '复制全文': 'Copy all',
+  '全文已复制': 'All copied',
+  // ---- transfer-1：产物传输到手机 + 外部应用打开（2026-11-13）。
+  '传到手机': 'Send to phone',
+  '传到手机？': 'Send to phone?',
+  '将向当前会话发送一条传输指令，agent 会把该文件分块传到手机'
+  '（约一轮普通工具调用的额度；单文件上限 20MB）。传输完成后'
+  '可用 WPS 等手机应用打开。':
+      'Sends a transfer instruction to the current conversation; the agent '
+      'will chunk the file to your phone (about one ordinary tool call of '
+      'quota; max 20MB per file). After the transfer, open it with WPS or '
+      'other phone apps.',
+  '取消传输？': 'Cancel transfer?',
+  '仅停止本面板的等待，agent 可能仍在执行分块；完成后可再次发起传输。':
+      'Only stops the wait in this panel; the agent may still be chunking. '
+      'You can start the transfer again later.',
+  '继续等待': 'Keep waiting',
+  '取消并关闭': 'Cancel & close',
+  '正在发送传输指令…': 'Sending transfer instruction…',
+  '等待 agent 分块传输中…': 'Waiting for the agent to chunk the file…',
+  '已收到完成标记，等待尾部分块…':
+      'Completion marker received; waiting for tail chunks…',
+  '正在保存到手机…': 'Saving to phone…',
+  '传输完成': 'Transfer complete',
+  '已收': 'received',
+  '块': 'parts',
+  '传输期间请勿关闭本页面；连接中断会自动重试轮询。':
+      'Keep this page open during the transfer; polling retries '
+      'automatically after disconnects.',
+  '用其他应用打开': 'Open with another app',
+  '清理临时文件': 'Clean up temp chunks',
+  '已发送清理': 'Cleanup sent',
+  '已发送清理指令，agent 会删除临时分块':
+      'Cleanup instruction sent; the agent will delete the temp chunks',
+  '会话未连接，无法传输；请进入该会话后重试':
+      'Conversation not connected; enter the conversation and try again',
+  '文件过大（超过 32MB），建议在桌面端查看':
+      'File too large (over 32 MB); view it on the desktop instead',
 };
 
 final _customPatterns = <_L10nPattern>[
@@ -1401,5 +1440,31 @@ final _customPatterns = <_L10nPattern>[
     RegExp(r'^([\s\S]+) · 前台 · 超时 (\d+)s$'),
     '{event} · foreground · timeout {n}s',
     {'event': 1, 'n': 2},
+  ),
+  // ---- transfer-1 插值串（拼好才进 tr()，必须走 pattern）。
+  _L10nPattern(
+    RegExp(r'^打开失败：([\s\S]+)$'),
+    'Failed to open: {detail}',
+    {'detail': 1},
+  ),
+  _L10nPattern(
+    RegExp(r'^清理指令发送失败：([\s\S]+)$'),
+    'Failed to send cleanup instruction: {detail}',
+    {'detail': 1},
+  ),
+  _L10nPattern(
+    RegExp(r'^保存或打开失败：([\s\S]+)$'),
+    'Failed to save or open: {detail}',
+    {'detail': 1},
+  ),
+  _L10nPattern(
+    RegExp(r'^已保存到手机 downloads（([\s\S]+)）$'),
+    'Saved to phone downloads ({size})',
+    {'size': 1},
+  ),
+  _L10nPattern(
+    RegExp(r'^自动打开失败：([\s\S]+)\n文件已保存，可手动重新打开。$'),
+    'Auto-open failed: {detail}\nFile saved; reopen it manually.',
+    {'detail': 1},
   ),
 ];

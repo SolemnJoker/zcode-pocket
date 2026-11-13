@@ -6,10 +6,12 @@ import '../core/localized_text.dart';
 import '../core/payload_guard.dart';
 import '../core/theme.dart';
 import '../state/app_state_scope.dart';
+import '../transport/conversation.dart' show ConversationSubscription;
 import 'conversation_message_cells.dart';
 import 'conversation_session_opener.dart';
 import 'diff_viewer_page.dart';
 import 'file_preview.dart';
+import 'transfer_sheet.dart';
 import 'turn_model.dart';
 
 IconData fileTypeIcon(String path) {
@@ -498,6 +500,12 @@ class FileSummaryCardState extends State<FileSummaryCard> {
                                           ],
                                         ),
                                       ),
+                                      // preview-kind-1 可发现性：可预览
+                                      // （html/md/文本+全文在手）的行给
+                                      // 「可看」角标；二进制档给「传到手机」
+                                      // 入口（transfer-1）——此前预览藏在
+                                      // 折叠卡内连维护者都找不到。
+                                      _rowTailActions(item),
                                       Text(
                                         '+${item['additions'] ?? 0}/'
                                         '-${item['deletions'] ?? 0}',
@@ -550,35 +558,95 @@ class FileSummaryCardState extends State<FileSummaryCard> {
     );
   }
 
+  /// 行尾动作区（preview-kind-1/transfer-1）：
+  /// - 可预览档（html/md/文本）且全文在手 → 「可看」角标（眼睛）；
+  /// - 二进制档（kind==none）→ 「传到手机」按钮（agent 分块中转）；
+  /// - 编辑过/拿不到全文的文本档不显示角标（落 diff 视图）。
+  Widget _rowTailActions(Map<String, dynamic> item) {
+    final path = '${item['path']}';
+    final kind = filePreviewKindFor(path);
+    if (kind == FilePreviewKind.none) {
+      return IconButton(
+        key: ValueKey('file-row-transfer-${item['path']}'),
+        visualDensity: VisualDensity.compact,
+        icon: Icon(
+          Icons.smartphone_outlined,
+          size: 15,
+          color: context.colors.brandAccent,
+        ),
+        tooltip: tr('传到手机'),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+        onPressed: () => _startTransfer(path),
+      );
+    }
+    final patches =
+        listOf(item['patches'])
+            ?.whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final previewable =
+        assembleNewFileText(patches) != null && kind != FilePreviewKind.none;
+    if (!previewable) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Icon(
+        Icons.visibility_outlined,
+        size: 13,
+        color: context.colors.brandAccent,
+      ),
+    );
+  }
+
+  /// 「传到手机」入口：需活跃会话订阅（行数据源）——无订阅（页面
+  /// 非活跃/已断连）诚实提示，不发指令。
+  Future<void> _startTransfer(String path) async {
+    final sessionId = widget.sessionId;
+    if (sessionId == null || !mounted) return;
+    final app = AppStateScope.of(context);
+    final ConversationSubscription? sub =
+        app.conversationSubscriptionOf(sessionId);
+    if (!mounted) return;
+    if (sub == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(tr('会话未连接，无法传输；请进入该会话后重试'))),
+      );
+      return;
+    }
+    await startFileTransfer(
+      context,
+      sessionId: sessionId,
+      path: path,
+      sub: sub,
+    );
+  }
+
   void _openViewer({String? initialPath, Map<String, dynamic>? item}) {
     final sessionId = widget.sessionId;
     final target = _target;
     if (sessionId == null || target == null || !mounted) return;
-    // 生成文件预览·网页档（file-preview-1，用户拍板只做 html）：新建
-    // html 的全文随 fileChanges 到达——本地 WebView 渲染（纯原生数据，
-    // 零提示词零额度）；编辑过的 html 只送变更行，宁进 diff 也不渲染
-    // 半份内容。
+    // 生成文件预览（file-preview-1 + preview-kind-1）：新建文件的全文
+    // 随 fileChanges 到达——html/md/纯文本按档位本地渲染（纯原生数据，
+    // 零提示词零额度）；编辑过的文件只送变更行，宁进 diff 也不渲染
+    // 半份内容；二进制档不试文本渲染（走「传到手机」）。
     if (item != null && initialPath == null) {
       final path = '${item['path']}';
-      if (isRenderableHtmlPath(path)) {
-        final patches =
-            listOf(item['patches'])
-                ?.whereType<Map>()
-                .map((e) => e.cast<String, dynamic>())
-                .toList() ??
-            const <Map<String, dynamic>>[];
-        final full = assembleNewFileText(patches);
-        if (full != null) {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => HtmlPreviewPage(
-                title: path.split(RegExp(r'[\\/]')).last,
-                htmlContent: full,
-              ),
-            ),
-          );
-          return;
-        }
+      final patches =
+          listOf(item['patches'])
+              ?.whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList() ??
+          const <Map<String, dynamic>>[];
+      final full = assembleNewFileText(patches);
+      if (full != null &&
+          openGeneratedFilePreview(
+            context,
+            title: path.split(RegExp(r'[\\/]')).last,
+            path: path,
+            content: full,
+          )) {
+        return;
       }
     }
     Navigator.of(context).push(

@@ -29,7 +29,9 @@ dependencyResolutionManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.1.0" apply false
+    // AGP 9.1.1（2026-11-13）：Flutter 3.50 的最低 AGP 要求（9.1.0
+    // 是 Flutter 3.4x 时代的最低值——SDK 升级跟随）。
+    id("com.android.application") version "9.1.1" apply false
     id("org.jetbrains.kotlin.android") version "2.4.0" apply false
 }
 

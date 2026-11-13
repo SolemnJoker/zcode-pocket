@@ -9,7 +9,15 @@ import 'workflow_dashboards.dart';
 import '../state/app_state.dart';
 import '../state/app_state_scope.dart';
 import 'app_widgets.dart' show AppLoading;
-import 'file_preview.dart' show HtmlPreviewPage;
+import 'file_preview.dart'
+    show
+        HtmlPreviewPage,
+        MarkdownFilePreviewPage,
+        TextFilePreviewPage,
+        isMarkdownPath,
+        markdownPreviewMaxChars;
+import '../transfer/local_files.dart'
+    show saveBytesToDownloads, openWithExternalApp, mimeForFileName;
 
 /// 工作流 run 目录与详情（workflow-runs-1，2026-10-30 用户拍板「更新
 /// 工作流及闲时执行部分」）：官方 v4 只读查询族——workflowRuns（run 摘
@@ -41,23 +49,78 @@ class ArtifactBlocks {
     required this.truncated,
     required this.oversized,
     required this.isImage,
+    this.isBinary = false,
   });
   final List<int> bytes;
   final bool truncated;
   final bool oversized;
   final bool isImage;
+
+  /// 二进制产物（transfer-1：office/pdf/压缩包等，app 内无渲染页——
+  /// 走「保存到手机 + 外部应用打开」）。
+  final bool isBinary;
+}
+
+/// 二进制产物上限（transfer-1）：64 块 × 512KiB = 32MiB——word/excel/
+/// pdf 常见体量；再大建议桌面端查看（诚实降级）。
+const artifactBinaryMaxBlocks = 64;
+const artifactBinaryMaxBytes = 32 * 1024 * 1024;
+
+/// 按扩展名判二进制产物（office/压缩包/音视频等；图片档不在此列——
+/// 图片有自己的预览页）。
+bool artifactLooksBinaryByExtension(String titleOrId) {
+  final dot = titleOrId.lastIndexOf('.');
+  if (dot < 0 || dot + 1 >= titleOrId.length) return false;
+  const exts = {
+    '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.ppt', '.pptx',
+    '.pdf', '.zip', '.7z', '.rar', '.gz', '.tar', '.bz2', '.xz',
+    '.mp3', '.wav', '.flac', '.ogg', '.m4a', '.mp4', '.mov', '.avi',
+    '.mkv', '.webm', '.ttf', '.otf', '.woff', '.woff2', '.sqlite',
+    '.db', '.parquet', '.psd', '.ai', '.exe', '.dll', '.dmg', '.iso',
+  };
+  return exts.contains(titleOrId.substring(dot).toLowerCase());
+}
+
+/// 首块魔数嗅探二进制（扩展名缺失兜底）：PK(zip/office)/%PDF/OLE。
+bool sniffBinaryMagic(List<int> b) {
+  if (b.length < 4) return false;
+  bool eq(int start, List<int> magic) {
+    if (b.length < start + magic.length) return false;
+    for (var i = 0; i < magic.length; i++) {
+      if (b[start + i] != magic[i]) return false;
+    }
+    return true;
+  }
+
+  return eq(0, [0x50, 0x4B, 0x03, 0x04]) || // PK\x03\x04（zip 系/office）
+      eq(0, [0x25, 0x50, 0x44, 0x46]) || // %PDF
+      eq(0, [0xD0, 0xCF, 0x11, 0xE0]) || // OLE（老 doc/xls）
+      eq(0, [0x37, 0x7A, 0xBC, 0xAF]) || // 7z
+      (b.length >= 3 && eq(0, [0x52, 0x61, 0x72])); // Rar!
 }
 
 Future<ArtifactBlocks> readArtifactBlocks({
   required String name,
   required ArtifactBlockRead read,
+  bool Function()? shouldAbort,
 }) async {
   var isImage = artifactLooksImageByExtension(name);
-  var blockLimit = isImage ? 32 : 8;
+  var isBinary = !isImage && artifactLooksBinaryByExtension(name);
+  var blockLimit = isImage ? 32 : (isBinary ? artifactBinaryMaxBlocks : 8);
   final bytes = <int>[];
   var offset = 0;
   var truncated = false;
   for (var i = 0; i < blockLimit; i++) {
+    if (shouldAbort?.call() == true) {
+      // 取消：按截断返回（调用方丢弃结果，不弹「已截断」误导）。
+      return ArtifactBlocks(
+        bytes: bytes,
+        truncated: true,
+        oversized: false,
+        isImage: isImage,
+        isBinary: isBinary,
+      );
+    }
     final res = await read(offset: offset, blockLimit: blockLimit);
     final b64 = '${(res is Map ? res['dataBase64'] : '') ?? ''}';
     if (b64.isEmpty) break;
@@ -65,21 +128,37 @@ Future<ArtifactBlocks> readArtifactBlocks({
     if (i == 0 && !isImage && sniffImageMagic(bytes)) {
       isImage = true;
       blockLimit = 32;
+    } else if (i == 0 && !isImage && !isBinary && sniffBinaryMagic(bytes)) {
+      isBinary = true;
+      blockLimit = artifactBinaryMaxBlocks;
     }
     final next =
         (res is Map ? (res['nextOffset'] as num?)?.toInt() : null) ?? -1;
     if (next <= offset || next <= 0) break;
-    if (isImage &&
-        bytes.length >= artifactImagePreviewMaxBytes &&
-        next > offset) {
+    final cap = isImage
+        ? artifactImagePreviewMaxBytes
+        : isBinary
+            ? artifactBinaryMaxBytes
+            : null;
+    if (cap != null && bytes.length >= cap && next > offset) {
       return ArtifactBlocks(
-        bytes: bytes, truncated: false, oversized: true, isImage: isImage);
+        bytes: bytes,
+        truncated: false,
+        oversized: true,
+        isImage: isImage,
+        isBinary: isBinary,
+      );
     }
     offset = next;
     if (i == blockLimit - 1) truncated = !isImage;
   }
   return ArtifactBlocks(
-    bytes: bytes, truncated: truncated, oversized: false, isImage: isImage);
+    bytes: bytes,
+    truncated: truncated,
+    oversized: false,
+    isImage: isImage,
+    isBinary: isBinary,
+  );
 }
 const _imageArtifactExts = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'};
 
@@ -644,13 +723,20 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
       if (r.oversized) {
         if (!mounted) return;
         messenger.showSnackBar(
-          SnackBar(content: Text(tr('图片过大（超过 16MB），暂不支持预览'))),
+          SnackBar(
+            content: Text(
+              r.isBinary
+                  ? tr('文件过大（超过 32MB），建议在桌面端查看')
+                  : tr('图片过大（超过 16MB），暂不支持预览'),
+            ),
+          ),
         );
         return;
       }
       final bytes = r.bytes;
       final truncated = r.truncated;
       final isImage = r.isImage;
+      final isBinary = r.isBinary;
       if (!mounted) return;
       final name = '${artifact['title'] ?? artifact['id']}';
       if (isImage) {
@@ -668,6 +754,18 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
             ),
           ),
         );
+        return;
+      }
+      // transfer-1：二进制产物（word/excel/pdf/压缩包等）app 内无渲染
+      // 页——直接走「保存到手机 + 外部应用打开」（纯数据通道，零额度）。
+      if (isBinary) {
+        if (bytes.isEmpty) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('该产物没有可读的内容')),
+          );
+          return;
+        }
+        await _saveAndOpenArtifact(name, bytes);
         return;
       }
       final text = utf8.decode(bytes, allowMalformed: true);
@@ -692,10 +790,24 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
             ),
           ),
         );
+      } else if (isMarkdownPath(name) &&
+          text.length <= markdownPreviewMaxChars) {
+        // preview-kind-1：markdown 产物进渲染页（样式与对话消息同源）。
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => MarkdownFilePreviewPage(
+              title: displayName,
+              content: text,
+            ),
+          ),
+        );
       } else {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => _ArtifactTextPage(title: displayName, content: text),
+            builder: (_) => TextFilePreviewPage(
+              title: displayName,
+              content: text,
+            ),
           ),
         );
       }
@@ -706,6 +818,63 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
     } finally {
       if (mounted) setState(() => _artifactBusy = false);
     }
+  }
+
+  /// 二进制产物：进度对话框（读盘+落盘有可感窗口，可取消）→ 落盘
+  /// downloads/ → 调起系统「用其他应用打开」。
+  Future<void> _saveAndOpenArtifact(String name, List<int> bytes) async {
+    final messenger = ScaffoldMessenger.of(context);
+    var aborted = false;
+    final progressDialog = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 14),
+            Text(
+              tr('正在保存到手机…'),
+              style: const TextStyle(fontSize: AppType.uiCaption),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              aborted = true;
+              Navigator.pop(context);
+            },
+            child: Text(tr('取消')),
+          ),
+        ],
+      ),
+    );
+    try {
+      final file = await saveBytesToDownloads(
+        fileName: name,
+        bytes: bytes,
+      );
+      if (aborted || !mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      await openWithExternalApp(
+        path: file.path,
+        mime: mimeForFileName(name),
+      );
+    } catch (e) {
+      // 对话框兜底关闭（openWithExternal 抛错时仍开着）。
+      if (!aborted && mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text(tr('保存或打开失败：$e'))),
+      );
+    }
+    // ignore: use_build_context_synchronously（progressDialog 的
+    // future 只用于抑制 unawaited 提示，不消费 context）。
+    await progressDialog;
   }
 
   @override
@@ -909,35 +1078,8 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
   }
 }
 
-/// 简单文本产物页（等宽只读）。
-class _ArtifactTextPage extends StatelessWidget {
-  final String title;
-  final String content;
-  const _ArtifactTextPage({required this.title, required this.content});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: context.colors.background,
-      appBar: AppBar(
-        backgroundColor: context.colors.background,
-        surfaceTintColor: Colors.transparent,
-        title: Text(title, translate: false, maxLines: 1, overflow: TextOverflow.ellipsis),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(12),
-        child: SelectableText(
-          content,
-          style: const TextStyle(
-            fontSize: AppType.uiCaption,
-            fontFamily: 'monospace',
-            height: 1.5,
-          ),
-        ),
-      ),
-    );
-  }
-}
+/// 简单文本产物页已晋升公共 TextFilePreviewPage（file_preview.dart，
+/// preview-kind-1：加一键复制全文；本页原私有实现删除）。
 
 /// 图片产物预览页：入口已限 16MiB；解码降采样 2048px
 /// 防大图位图尖峰；双指缩放平移；解码期 spinner 占位（大图分块读+解码
@@ -950,6 +1092,19 @@ class ArtifactImagePage extends StatelessWidget {
 
   const ArtifactImagePage({super.key, required this.title, required this.bytes});
 
+  /// transfer-1：落盘 downloads/ 并调起外部应用（系统图库/编辑器）。
+  Future<void> _openExternally(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final file = await saveBytesToDownloads(fileName: title, bytes: bytes);
+      await openWithExternalApp(path: file.path, mime: mimeForFileName(title));
+    } catch (e) {
+      messenger.showSnackBar(
+        SnackBar(content: Text(tr('保存或打开失败：$e'))),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -961,6 +1116,14 @@ class ArtifactImagePage extends StatelessWidget {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
+        actions: [
+          IconButton(
+            tooltip: tr('用其他应用打开'),
+            icon: const Icon(Icons.open_in_new, size: 20),
+            onPressed: () => _openExternally(context),
+          ),
+          const SizedBox(width: 4),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: context.colors.border),

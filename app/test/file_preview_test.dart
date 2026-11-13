@@ -11,6 +11,7 @@ import 'package:zcode_pocket/transport/rpc_frame_transport.dart';
 import 'package:zcode_pocket/ui/conversation_page.dart';
 import 'package:zcode_pocket/ui/diff_viewer_page.dart';
 import 'package:zcode_pocket/ui/file_preview.dart';
+import 'package:zcode_pocket/ui/transfer_sheet.dart';
 
 /// 生成文件预览·网页档（file-preview-1，2026-10-29 用户拍板「只做 html
 /// 的部分」）：协议无任意文件字节读取通道——唯一原生路径=新建 html 全文
@@ -486,5 +487,131 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(find.byType(DiffViewerPage), findsOneWidget);
+  });
+
+  group('preview-kind-1：markdown/文本档扩展（2026-11-13）', () {
+    test('filePreviewKindFor：html/md/二进制/文本分档', () {
+      expect(filePreviewKindFor('a/b/index.html'), FilePreviewKind.html);
+      expect(filePreviewKindFor('notes.MD'), FilePreviewKind.markdown);
+      expect(filePreviewKindFor('报告.markdown'), FilePreviewKind.markdown);
+      expect(filePreviewKindFor('doc.DOCX'), FilePreviewKind.none);
+      expect(filePreviewKindFor('data.xlsx'), FilePreviewKind.none);
+      expect(filePreviewKindFor('a/b/manual.pdf'), FilePreviewKind.none);
+      expect(filePreviewKindFor('img.png'), FilePreviewKind.none);
+      expect(filePreviewKindFor('pkg.tgz'), FilePreviewKind.none);
+      // 无扩展/未知扩展宽容为文本（Makefile/无后缀脚本）。
+      expect(filePreviewKindFor('a/Makefile'), FilePreviewKind.text);
+      expect(filePreviewKindFor('a/data.json'), FilePreviewKind.text);
+      expect(filePreviewKindFor('a/run.py'), FilePreviewKind.text);
+      expect(filePreviewKindFor('unknown.xyz'), FilePreviewKind.text);
+    });
+
+    test('isMarkdownPath 与 isKnownBinaryPath', () {
+      expect(isMarkdownPath('a/readme.md'), isTrue);
+      expect(isMarkdownPath('a/notes.markdown'), isTrue);
+      expect(isMarkdownPath('a/md.txt'), isFalse);
+      expect(isKnownBinaryPath('a.docx'), isTrue);
+      expect(isKnownBinaryPath('a.PDF'), isTrue);
+      expect(isKnownBinaryPath('a.md'), isFalse);
+    });
+
+    test('looksLikeBinaryText：NUL 嗅探防二进制误入文本页', () {
+      expect(looksLikeBinaryText('hello world'), isFalse);
+      expect(looksLikeBinaryText(''), isFalse);
+      expect(looksLikeBinaryText('ok\u0000binary'), isTrue);
+    });
+
+    testWidgets('旅程：新建 md 进 markdown 渲染页、新建 txt 进文本页、'
+        '新建 docx 给「传到手机」入口', (tester) async {
+      await tester.pumpWidget(
+        _host(
+          _PreviewApp(_cardRows(), {
+            'files': 3,
+            'additions': 6,
+            'deletions': 0,
+            'items': [
+              {
+                'path': 'docs/说明.md',
+                'additions': 3,
+                'deletions': 0,
+                'writeCount': 1,
+                'toolNames': ['Write'],
+                'patches': [
+                  {
+                    'lines': ['+# 标题', '+', '+正文段落'],
+                  },
+                ],
+              },
+              {
+                'path': 'notes.txt',
+                'additions': 2,
+                'deletions': 0,
+                'writeCount': 1,
+                'toolNames': ['Write'],
+                'patches': [
+                  {'lines': ['+第一行', '+第二行']},
+                ],
+              },
+              {
+                'path': 'report.docx',
+                'additions': 1,
+                'deletions': 0,
+                'writeCount': 1,
+                'toolNames': ['Write'],
+                'patches': [
+                  {'lines': ['+PK\u0003\u0004fake-binary']},
+                ],
+              },
+            ],
+          }),
+        ),
+      );
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.tap(find.byKey(const ValueKey('file-summary-card-2')));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // 新建 md → Markdown 渲染页。
+      await tester.tap(find.byKey(const ValueKey('file-row-docs/说明.md')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byType(MarkdownFilePreviewPage), findsOneWidget);
+      expect(find.byType(DiffViewerPage), findsNothing);
+      await tester.pageBack();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // 新建 txt → 文本预览页。
+      await tester.tap(find.byKey(const ValueKey('file-row-notes.txt')));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.byType(TextFilePreviewPage), findsOneWidget);
+      expect(find.textContaining('第一行'), findsOneWidget);
+      await tester.pageBack();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // 新建 docx（二进制档）→ 行内出现「传到手机」按钮；点按因无
+      // 订阅（测试宿主无活跃会话）诚实提示，不进传输面板。
+      expect(
+        find.byKey(const ValueKey('file-row-transfer-report.docx')),
+        findsOneWidget,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('file-row-transfer-report.docx')),
+      );
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.textContaining('会话未连接'), findsOneWidget);
+      expect(find.byType(TransferSheet), findsNothing);
+    });
   });
 }

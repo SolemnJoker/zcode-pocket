@@ -95,6 +95,20 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="desktop_remote_control_keepalive_notification"/>
         </service>
+        <!-- transfer-1（2026-11-13）：产物传到手机后「用其他应用打开」
+             ——FileProvider 按次授予读 URI（导出 false），覆盖域限定
+             应用私有 files 目录树（含 path_provider documents=
+             files/app_flutter 及其 downloads 子目录），不引入存储权限。
+             静态断言见 app/test/android_manifest_guard_test.dart。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

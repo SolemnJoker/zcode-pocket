@@ -252,6 +252,46 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                 }
             }
+        // 文件外部应用打开（transfer-1，2026-11-13）：FileProvider 按次
+        // 读授权 + ACTION_VIEW 系统选择器（WPS/Office/图库等出现在其中）。
+        // 文件路径由 Dart 侧落盘（应用私有 documents/downloads），此处
+        // 不做任何存储读之外的事；不声明存储权限。
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "companion/fileopener",
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "openWithExternal") {
+                val path = call.argument<String>("path")
+                val mime = call.argument<String>("mime")
+                if (path.isNullOrBlank()) {
+                    result.error("bad_args", "path required", null)
+                    return@setMethodCallHandler
+                }
+                try {
+                    val file = java.io.File(path)
+                    if (!file.exists()) {
+                        result.error("not_found", "file missing: $path", null)
+                        return@setMethodCallHandler
+                    }
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        this,
+                        "$packageName.fileprovider",
+                        file,
+                    )
+                    val intent = Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, mime?.takeIf { it.isNotBlank() } ?: "*/*")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    val chooser = Intent.createChooser(intent, null)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    startActivity(chooser)
+                    result.success(true)
+                } catch (e: Exception) {
+                    result.error("open_failed", e.message, null)
+                }
+            } else {
+                result.notImplemented()
+            }
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "companion/notify")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- transfer-1（2026-11-13）：外部应用打开的 FileProvider 覆盖域。
+     files-path 映射 Context.getFilesDir()；path_provider 的
+     getApplicationDocumentsDirectory() 落在其子目录 app_flutter/
+     下（downloads/ 再下一级），因此用整树 "."——目录仍为应用私有，
+     仅按次读授权（FLAG_GRANT_READ_URI_PERMISSION）随 intent 发放，
+     不构成对外导出。 -->
+<paths>
+    <files-path
+        name="app_files"
+        path="."/>
+</paths>
