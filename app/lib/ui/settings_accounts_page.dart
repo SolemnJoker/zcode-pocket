@@ -61,8 +61,33 @@ class _SettingsAccountsPageState extends State<SettingsAccountsPage> {
   }
 
   Future<void> _addAccount() async {
+    // 排查批 2026-11-14（用户反馈「添加第二账号无跳转」）：全链路
+    // 打点 + 异常兜底——此前 push 及后续编排任何同步异常都静默吞掉
+    // （无 catch=控制台有痕、屏上无反馈，观感即「点了没反应」）。
+    debugPrint('[accounts] add-account tapped: pushing LoginPage');
+    late final LoginPage page;
+    try {
+      page = const LoginPage();
+    } catch (e) {
+      debugPrint('[accounts] LoginPage construct FAILED: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('登录页构造失败：$e')),
+        );
+      }
+      return;
+    }
     final result = await Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const LoginPage()));
+        .push(MaterialPageRoute(builder: (_) => page))
+        .catchError((Object e) {
+      debugPrint('[accounts] push LoginPage FAILED: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开登录页失败：$e')),
+        );
+      }
+      return null;
+    });
     // await 后先查 mounted 再做 inherited 查找
     //（防 defunct element 上的 dependOnInheritedWidget 断言）。
     if (!mounted) return;

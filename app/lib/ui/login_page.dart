@@ -27,6 +27,15 @@ class LoginPage extends StatefulWidget {
   @visibleForTesting
   static bool debugDisableWebView = false;
 
+  /// 诊断浮层开关（transfer 排查批 2026-11-14）：dart-define
+  /// ZP_LOGIN_DIAG=1 时登录页底部显示诊断行（清场/finish URL/闸门/
+  /// 提取结果）——用户截图即可替代 adb logcat 取证。默认关=零 UI 影响。
+  static bool get diagOverlay =>
+      const bool.fromEnvironment('ZP_LOGIN_DIAG', defaultValue: false);
+
+  /// 屏上诊断环形缓冲（diagOverlay 开启时有内容；有界防长会话累积）。
+  static final List<String> diagLines = <String>[];
+
   final Map<String, String> qrParams;
   const LoginPage({super.key, this.qrParams = const {}});
 
@@ -169,13 +178,30 @@ String? decodeWebViewJsStringResult(Object raw) {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  /// 诊断日志（真机仍失败，2026-11-03 仪器化）：登录页全程打点
+  /// 诊断日志（transfer 排查批 2026-11-14 重新启用）：登录页全程打点
   /// 到 logcat（[login] 前缀，与 [app] 同通道）——清场三步、每次 finish
   /// 的真实 URL、闸门转换、导航、提取结果。排查 ①添加账号失败的
   /// 决定性证据（此前 WebView 内部对 logcat 完全静默，只能盲猜）。
-  // 诊断打点（- 排查期）：排查已收口，置为
-  // 静默保留调用点——未来排查一键恢复函数体即可。
-  void _diag(String line) {}
+  /// 同时进屏上环形缓冲（ZP_LOGIN_DIAG=1 时渲染为登录页底部浮层，
+  /// 无 adb 的用户可截图取证；缓冲有界防长会话累积）。
+  void _diag(String line) {
+    final stamped =
+        '${DateTime.now().toLocal().hour.toString().padLeft(2, '0')}:'
+        '${DateTime.now().toLocal().minute.toString().padLeft(2, '0')}:'
+        '${DateTime.now().toLocal().second.toString().padLeft(2, '0')} '
+        '$line';
+    debugPrint('[login] $stamped');
+    if (LoginPage.diagOverlay) {
+      LoginPage.diagLines.add(stamped);
+      if (LoginPage.diagLines.length > 200) {
+        LoginPage.diagLines.removeRange(0, LoginPage.diagLines.length - 200);
+      }
+      // 浮层刷新：诊断调用点遍布异步链路，统一走帧尾调度（mounted 后）。
+      scheduleMicrotask(() {
+        if (mounted) setState(() {});
+      });
+    }
+  }
   WebViewController? _controller;
   Timer? _poll;
   bool _extracting = false;
@@ -542,6 +568,38 @@ class _LoginPageState extends State<LoginPage> {
                     child: ColoredBox(
                       color: context.colors.background,
                       child: _errorView(context),
+                    ),
+                  ),
+                // 诊断浮层（ZP_LOGIN_DIAG=1）：底部最近 5 行，等宽半透
+                // 明，截图取证用。生产构建恒为空（零 UI 影响）。
+                if (LoginPage.diagOverlay)
+                  Positioned(
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.72),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          LoginPage.diagLines
+                              .toList()
+                              .reversed
+                              .take(5)
+                              .toList()
+                              .reversed
+                              .join('\n'),
+                          style: const TextStyle(
+                            fontSize: 9,
+                            fontFamily: 'monospace',
+                            color: Colors.white,
+                            height: 1.25,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
               ],
