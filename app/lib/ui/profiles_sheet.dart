@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' hide Text;
 import '../core/localized_text.dart';
 
 import '../core/theme.dart';
+import '../state/account_store.dart' show StoredAccount;
 import '../state/app_state.dart';
 import '../state/app_state_scope.dart';
 import '../transport/z_transport.dart';
@@ -36,6 +37,48 @@ class _ProfilesSheetState extends State<_ProfilesSheet> {
   /// 账号徽标（单账号不显示——避免噪音）。
   Map<String, String> _accountLabels = const {};
   bool _labelsFetchInFlight = false;
+
+  /// 账号区（2026-11-15 用户反馈）：面板此前只列电脑、账号只作徽标
+  /// ——添加第二账号后面板毫无变化（新账号名下无电脑=无档案可显示）
+  /// ，用户以为添加失败。补账号清单+「设为当前」直达。
+  List<StoredAccount> _accounts = const [];
+  String? _lastUsedId;
+  bool _accountsInFlight = false;
+
+  /// 账号清单懒加载（build 期惰性拉取，在飞去重——同徽标映射范式）。
+  void _maybeRefreshAccounts(AppState app) {
+    if (_accountsInFlight) return;
+    _accountsInFlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (!mounted) return;
+        final accounts = await app.accountStore.listAccounts();
+        final lastUsed = await app.accountStore.lastUsedAccountId;
+        if (!mounted) return;
+        setState(() {
+          _accounts = accounts;
+          _lastUsedId = lastUsed;
+        });
+      } finally {
+        _accountsInFlight = false;
+      }
+    });
+  }
+
+  /// 设为当前账号（账号管理页「设为当前」同 API）：影响新扫码配对/
+  /// 设备列表跟随的账号，不动活跃连接栈。
+  Future<void> _setCurrentAccount(StoredAccount account) async {
+    if (account.id == _lastUsedId) return;
+    await AppStateScope.of(context).accountStore.setLastUsed(account.id);
+    if (!mounted) return;
+    setState(() => _lastUsedId = account.id);
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(
+        content: Text('已设为当前账号：${account.displayName}'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   //徽标映射改为 build 期惰性补拉（在飞
   /// 去重）——弹层停留期间在别处添加/删除账号时，新绑定档案的徽标
@@ -180,6 +223,7 @@ class _ProfilesSheetState extends State<_ProfilesSheet> {
   Widget build(BuildContext context) {
     final app = AppStateScope.of(context);
     _maybeRefreshLabels(app);
+    _maybeRefreshAccounts(app);
     final list = app.profiles;
     return SafeArea(
       child: ListView(
@@ -187,6 +231,73 @@ class _ProfilesSheetState extends State<_ProfilesSheet> {
         keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         children: [
+          // 账号区（2026-11-15）：账号清单+设为当前——添加账号后面板
+          // 立即可见新账号（此前只列电脑，新账号名下无档案=零反馈）。
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 8),
+            child: Text(
+              '账号',
+              style: TextStyle(
+                fontSize: AppType.uiSm,
+                fontWeight: FontWeight.w600,
+                color: context.colors.foregroundSubtle,
+              ),
+            ),
+          ),
+          for (final account in _accounts)
+            ListTile(
+              key: ValueKey('profiles-account-${account.id}'),
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.account_circle_outlined,
+                size: 20,
+                color: account.id == _lastUsedId
+                    ? context.colors.brandAccent
+                    : context.colors.foregroundSubtle,
+              ),
+              title: Text(
+                account.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: AppType.uiCaption),
+              ),
+              trailing: account.id == _lastUsedId
+                  ? Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: context.colors.brandAccent.withValues(
+                          alpha: AppAlpha.faint,
+                        ),
+                        borderRadius: BorderRadius.circular(AppRadius.pill),
+                      ),
+                      child: Text(
+                        '当前账号',
+                        style: TextStyle(
+                          fontSize: AppType.uiXs,
+                          color: context.colors.brandAccent,
+                        ),
+                      ),
+                    )
+                  : null,
+              onTap: () => _setCurrentAccount(account),
+            ),
+          if (_accounts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 4),
+              child: Text(
+                '未登录任何账号',
+                style: TextStyle(
+                  fontSize: AppType.uiCaption,
+                  color: context.colors.foregroundSubtle,
+                ),
+              ),
+            ),
+          const Divider(height: 16),
           Padding(
             padding: const EdgeInsets.only(left: 4, bottom: 8),
             child: Text(

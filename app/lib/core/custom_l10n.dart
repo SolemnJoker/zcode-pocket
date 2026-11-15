@@ -971,6 +971,8 @@ const _customEn = <String, String>{
       'pick a computer, or sign in with a new account?',
   '使用当前账号': 'Use current account',
   '登录新账号': 'Sign in a new account',
+  // 档案面板账号区（2026-11-15）。
+  '未登录任何账号': 'No signed-in account',
 };
 
 final _customPatterns = <_L10nPattern>[
@@ -1473,5 +1475,11 @@ final _customPatterns = <_L10nPattern>[
     RegExp(r'^自动打开失败：([\s\S]+)\n文件已保存，可手动重新打开。$'),
     'Auto-open failed: {detail}\nFile saved; reopen it manually.',
     {'detail': 1},
+  ),
+  // 档案面板账号区插值串。
+  _L10nPattern(
+    RegExp(r'^已设为当前账号：([\s\S]+)$'),
+    'Current account: {account}',
+    {'account': 1},
   ),
 ];
