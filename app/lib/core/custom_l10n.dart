@@ -436,6 +436,11 @@ const _customEn = <String, String>{
   '可视化': 'Visualization',
   '思考·继承': 'Thinking · inherit',
   '未能定位该可视化所属的轮次': 'Could not locate the turn for this visualization',
+  // link-tap-1：markdown 文件链接的通用降级文案（相对路径链接点击）。
+  '未能定位该文件所属的轮次': 'Could not locate the turn for this file',
+  '该文件不在本轮文件变更里，手机暂无法读取（桌面端可直接查看）':
+      'This file is not in this turn\'s changes and cannot be read on the '
+      'phone (view it on the desktop directly)',
   '该可视化文件不在本轮文件变更里，手机暂无法读取（桌面端可直接查看）':
       "This visualization file is not in this turn's file changes; "
       'the phone cannot read it yet (view it on desktop)',

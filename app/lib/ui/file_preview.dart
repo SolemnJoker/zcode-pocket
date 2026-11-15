@@ -148,6 +148,83 @@ bool visualizePathMatches(String directivePath, String itemPath) {
 
 /// 指令位的可点卡片：点按 → 本轮 fileChanges 找同路径条目 → 全文进
 /// HtmlPreviewPage；找不到/非新建 → 人话提示。
+/// 工作区文件链接的统一解析入口（link-tap-1，2026-11-15）：路径 →
+/// 所属轮 fileChanges 尾匹配 → 新建全文 → [openGeneratedFilePreview]
+/// 档位渲染。失败用 snackbar 诚实降级（编辑过的文件只送变更片段、
+/// 非本轮创建的文件拿不到全文——协议无按路径读文件通道）。
+/// [missingTurnMessage]/[notInChangesMessage] 允许调用方按入口定制
+/// 文案（::visualize 卡与正文 markdown 链接措辞不同）。
+Future<void> openWorkspaceFilePreview(
+  BuildContext context, {
+  required String sessionId,
+  required Map<String, dynamic> header,
+  required String path,
+  String? missingTurnMessage,
+  String? notInChangesMessage,
+}) async {
+  final entityId = '${header['entityId'] ?? ''}'.trim();
+  final messenger = ScaffoldMessenger.maybeOf(context);
+  if (entityId.isEmpty) {
+    messenger?.showSnackBar(
+      SnackBar(
+        content: Text(tr(missingTurnMessage ?? '未能定位该文件所属的轮次')),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+    return;
+  }
+  try {
+    final app = AppStateScope.of(context);
+    final res = await app.fileChanges(sessionId, target: {
+      'rowId': header['rowId'],
+      'entityId': entityId,
+    });
+    final items = (res is Map ? res['items'] as List? : null) ?? const [];
+    Map<String, dynamic>? hit;
+    for (final e in items) {
+      if (e is Map && visualizePathMatches(path, '${e['path']}')) {
+        hit = e.cast<String, dynamic>();
+        break;
+      }
+    }
+    final patches = (hit?['patches'] as List?)
+            ?.whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final full = hit == null ? null : assembleNewFileText(patches);
+    if (!context.mounted) return;
+    if (full == null) {
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Text(
+            tr(
+              hit == null
+                  ? (notInChangesMessage ??
+                      '该文件不在本轮文件变更里，手机暂无法读取（桌面端可直接查看）')
+                  : '该文件非本轮新建（只送变更片段），暂无法渲染',
+            ),
+          ),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+    openGeneratedFilePreview(
+      context,
+      title: path.split(RegExp(r'[\\/]')).last,
+      path: path,
+      content: full,
+    );
+  } catch (e) {
+    if (context.mounted) {
+      messenger?.showSnackBar(
+        SnackBar(content: Text(tr('读取失败：$e')), duration: const Duration(seconds: 3)),
+      );
+    }
+  }
+}
+
 class VisualizeCard extends StatefulWidget {
   const VisualizeCard({
     super.key,
@@ -173,51 +250,23 @@ class _VisualizeCardState extends State<VisualizeCard> {
     if (_busy) return;
     final sessionId = widget.sessionId;
     final header = widget.header;
-    final entityId = '${header?['entityId'] ?? ''}'.trim();
-    if (sessionId == null || header == null || entityId.isEmpty) {
+    if (sessionId == null || header == null) {
       _snack('未能定位该可视化所属的轮次');
       return;
     }
     setState(() => _busy = true);
     try {
-      final app = AppStateScope.of(context);
-      final res = await app.fileChanges(sessionId, target: {
-        'rowId': header['rowId'],
-        'entityId': entityId,
-      });
-      final items = (res is Map ? res['items'] as List? : null) ?? const [];
-      Map<String, dynamic>? hit;
-      for (final e in items) {
-        if (e is Map && visualizePathMatches(widget.path, '${e['path']}')) {
-          hit = e.cast<String, dynamic>();
-          break;
-        }
-      }
-      final patches = (hit?['patches'] as List?)
-              ?.whereType<Map>()
-              .map((e) => e.cast<String, dynamic>())
-              .toList() ??
-          const <Map<String, dynamic>>[];
-      final full = hit == null ? null : assembleNewFileText(patches);
-      if (!mounted) return;
-      if (full == null) {
-        _snack(
-          hit == null
-              ? '该可视化文件不在本轮文件变更里，手机暂无法读取（桌面端可直接查看）'
-              : '该文件非本轮新建（只送变更片段），暂无法渲染',
-        );
-        return;
-      }
-      // preview-kind-1：路由收敛到统一入口（html/md/文本按扩展分发；
-      // ::visualize 引用的多为 html，md/文本引用同样正确渲染）。
-      openGeneratedFilePreview(
+      // link-tap-1（2026-11-15 用户反馈：markdown 相对路径链接只复制
+      // 不预览）：解析逻辑抽到 [openWorkspaceFilePreview]，::visualize
+      // 卡与正文 markdown 链接共用同一条路径→fileChanges→全文→档位渲染。
+      await openWorkspaceFilePreview(
         context,
-        title: widget.path.split(RegExp(r'[\\/]')).last,
+        sessionId: sessionId,
+        header: header,
         path: widget.path,
-        content: full,
+        missingTurnMessage: '未能定位该可视化所属的轮次',
+        notInChangesMessage: '该可视化文件不在本轮文件变更里，手机暂无法读取（桌面端可直接查看）',
       );
-    } catch (e) {
-      if (mounted) _snack('读取失败：$e');
     } finally {
       if (mounted) setState(() => _busy = false);
     }

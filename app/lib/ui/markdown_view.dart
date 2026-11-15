@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide Text;
 import '../core/localized_text.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +9,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../core/code_highlight.dart';
 import '../core/theme.dart';
 import 'app_widgets.dart';
+import 'file_preview.dart' show openWorkspaceFilePreview;
 
 /// 本地路径链接预处理（早期反馈②b）：agent 回复常带
 /// `[文件名](G:\path with space\文件.txt)`——路径含空格/反斜杠不是
@@ -52,11 +55,21 @@ class MarkdownView extends StatelessWidget {
   /// 语法高亮总开关（设置→对话；默认开）。由调用方从 uiPrefs 传入。
   final bool codeHighlightEnabled;
 
+  /// 会话上下文（link-tap-1，2026-11-15 用户反馈：正文里的工作区文件
+  /// 链接——含相对路径——此前相对路径走「复制+提示」，绝对路径点击
+  /// 静默，预览不可达）。两参数齐备时，链接点击尝试经所属轮
+  /// fileChanges 解析全文并按档位开预览（见 [openWorkspaceFilePreview]
+  /// ）；缺任一则维持旧行为（网络链接可复制、绝对路径静默）。
+  final String? sessionId;
+  final Map<String, dynamic>? turnHeader;
+
   const MarkdownView({
     super.key,
     required this.data,
     this.streaming = false,
     this.codeHighlightEnabled = true,
+    this.sessionId,
+    this.turnHeader,
   });
 
   @override
@@ -89,10 +102,12 @@ class MarkdownView extends StatelessWidget {
           padding: styleSheet.codeblockPadding ?? const EdgeInsets.all(12),
         ),
       },
-      // 点链接的响应分两类（批4 反馈④，2026-10-23 用户拍板）：
-      // - 本地文件路径：协议层无文件内容读取 RPC（ZCode 官方开源实现
-      //   zcode-protocol-v4 全量 grep 实证，桌面预览是本地读盘），复制
-      //   路径在手机端无实用价值——点击不做任何响应（绿色渲染保留）。
+      // 点链接的响应分三类（批4 反馈④ + link-tap-1 2026-11-15）：
+      // - 工作区文件路径（绝对或相对，无 scheme）：sessionId+turnHeader
+      //   齐备时尝试解析全文开预览（新文件全文随 fileChanges 到达）；
+      //   解析失败诚实降级。无会话上下文时维持旧行为（见下）。
+      // - 本地文件路径（无上下文）：协议层无文件内容读取 RPC——点击
+      //   不响应（绿色渲染保留）。
       // - 网络链接：保持可点（提示+复制）。
       onTapLink: (text, href, title) {
         if (href == null || href.isEmpty) return;
@@ -104,9 +119,31 @@ class MarkdownView extends StatelessWidget {
         } catch (_) {
           decoded = href;
         }
+        final hasScheme =
+            RegExp(r'^[a-zA-Z][a-zA-Z0-9+.-]*://').hasMatch(decoded) ||
+                decoded.startsWith('#');
         final isLocal =
             RegExp(r'^[A-Za-z]:[\\/]').hasMatch(decoded) ||
                 decoded.startsWith('/');
+        // 相对路径链接（`docs/report.md` 形态）也是工作区文件——
+        // 带扩展名或含路径分隔即认（agent 常用工作区相对路径引用产物）。
+        final pathLike = !hasScheme &&
+            (isLocal ||
+                decoded.contains('/') ||
+                RegExp(r'\.[A-Za-z0-9]{1,8}$').hasMatch(decoded));
+        if (pathLike &&
+            sessionId != null &&
+            turnHeader != null) {
+          unawaited(
+            openWorkspaceFilePreview(
+              context,
+              sessionId: sessionId!,
+              header: turnHeader!,
+              path: decoded,
+            ),
+          );
+          return;
+        }
         if (isLocal) return;
         Clipboard.setData(ClipboardData(text: decoded));
         ScaffoldMessenger.of(context).showSnackBar(

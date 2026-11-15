@@ -263,6 +263,11 @@ class AssistantText extends StatelessWidget {
                                   data: seg.text ?? '',
                                   streaming: streaming,
                                   codeHighlightEnabled: codeHighlight,
+                                  // link-tap-1：正文内工作区文件链接（含
+                                  // 相对路径）点击开预览——与 visualize 卡
+                                  // 同一条解析链路。
+                                  sessionId: sessionId,
+                                  turnHeader: header,
                                 ),
                       ],
                       // 轮尾操作行（2026-10-23 桌面对齐批）：复制/赞/踩/分支
