@@ -964,6 +964,13 @@ const _customEn = <String, String>{
       'Conversation not connected; enter the conversation and try again',
   '文件过大（超过 32MB），建议在桌面端查看':
       'File too large (over 32 MB); view it on the desktop instead',
+  // ---- 多账号入口修复（2026-11-15 用户反馈：下拉框路径加不了账号）。
+  '已有账号登录': 'Account already signed in',
+  '当前已有账号凭据。要打开设备列表选择电脑，还是登录一个新账号？':
+      'Credentials for an account already exist. Open the device list to '
+      'pick a computer, or sign in with a new account?',
+  '使用当前账号': 'Use current account',
+  '登录新账号': 'Sign in a new account',
 };
 
 final _customPatterns = <_L10nPattern>[

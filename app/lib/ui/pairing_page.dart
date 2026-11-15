@@ -198,6 +198,52 @@ class _PairingPageState extends State<PairingPage> {
           }
           if (!mounted) return;
           setState(() => _targetAccountId = targetAccountId);
+        } else if (params.deviceSid == null) {
+          // 已有账号 + 无 sid 的「账号登录」入口（2026-11-15 用户反馈
+          // 修复）：原实现凭已有凭据直接跳设备列表，「登录第二个账号」
+          // 从此入口永远不可达——给用户显式选择。扫码（带 sid）路径
+          // 保持原语义不打断配对。
+          final choice = await showDialog<String>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('已有账号登录'),
+              content: const Text(
+                '当前已有账号凭据。要打开设备列表选择电脑，还是登录一个新账号？',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(null),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: () =>
+                      Navigator.of(dialogContext).pop('current'),
+                  child: const Text('使用当前账号'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(dialogContext).pop('login'),
+                  child: const Text('登录新账号'),
+                ),
+              ],
+            ),
+          );
+          if (!mounted) return;
+          if (choice == 'login') {
+            final result = await Navigator.of(context)
+                .push<Map<String, String>>(
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                );
+            if (!mounted) return;
+            if (result == null) return; // 用户取消登录
+            targetAccountId = result['accountId'];
+            if (targetAccountId == null || targetAccountId.isEmpty) {
+              targetAccountId = await app.accountStore.mostRecentAccountId;
+            }
+            if (!mounted) return;
+            setState(() => _targetAccountId = targetAccountId);
+          } else if (choice != 'current') {
+            return; // 用户取消：收起连接态（finally 复位）
+          }
         }
       }
       if (params.deviceSid == null) {

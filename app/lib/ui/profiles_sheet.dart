@@ -7,6 +7,7 @@ import '../state/app_state.dart';
 import '../state/app_state_scope.dart';
 import '../transport/z_transport.dart';
 import 'app_widgets.dart';
+import 'login_page.dart';
 import 'pairing_page.dart';
 
 /// 电脑档案管理面板（裁决：档案切换为一级入口）。
@@ -262,9 +263,41 @@ class _ProfilesSheetState extends State<_ProfilesSheet> {
             icon: const Icon(Icons.add),
             label: const Text('添加电脑'),
           ),
+          // 添加账号一级入口（2026-11-15 用户反馈）：此前面板只有
+          // 「添加电脑」，第二账号只能绕道 设置→账号管理——用户在
+          // 下拉框找不到添加账号路径。登录页压在面板之上，完成后
+          // 关面板回主页（reattach 编排与账号管理页同款）。
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('profiles-add-account'),
+            onPressed: () => _addAccount(context),
+            icon: const Icon(Icons.account_circle_outlined),
+            label: const Text('添加账号（官方登录）'),
+          ),
         ],
       ),
     );
+  }
+
+  /// 添加账号：登录页压面板之上（保持 context 合法——先 pop 再 await
+  /// 会拿到 defunct element）；登录成功走 reattach 编排接回该账号
+  /// 档案，随后关面板。
+  Future<void> _addAccount(BuildContext context) async {
+    final result = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+    );
+    if (!mounted) return;
+    if (result != null && result['jwt'] is String) {
+      final app = AppStateScope.of(context);
+      try {
+        await app.reattachAfterAccountLogin();
+      } catch (_) {}
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(content: Text('账号已添加，当前账号未变')),
+      );
+    }
+    if (mounted) Navigator.of(context).pop();
   }
 }
 
