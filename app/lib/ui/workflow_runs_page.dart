@@ -15,6 +15,7 @@ import 'file_preview.dart'
         MarkdownFilePreviewPage,
         TextFilePreviewPage,
         isMarkdownPath,
+        looksLikeBinaryText,
         markdownPreviewMaxChars;
 import '../transfer/local_files.dart'
     show saveBytesToDownloads, openWithExternalApp, mimeForFileName;
@@ -81,7 +82,9 @@ bool artifactLooksBinaryByExtension(String titleOrId) {
   return exts.contains(titleOrId.substring(dot).toLowerCase());
 }
 
-/// 首块魔数嗅探二进制（扩展名缺失兜底）：PK(zip/office)/%PDF/OLE。
+/// 首块魔数嗅探二进制（扩展名缺失兜底）：PK(zip/office)/%PDF/OLE/
+/// 7z/Rar/MZ(exe——2026-11-15 真机实证：「单文件 exe（release 构建，
+/// 11.9 MB）」类产物标题无扩展名，缺 MZ 会把 exe 当文本渲染成乱码页）。
 bool sniffBinaryMagic(List<int> b) {
   if (b.length < 4) return false;
   bool eq(int start, List<int> magic) {
@@ -96,6 +99,7 @@ bool sniffBinaryMagic(List<int> b) {
       eq(0, [0x25, 0x50, 0x44, 0x46]) || // %PDF
       eq(0, [0xD0, 0xCF, 0x11, 0xE0]) || // OLE（老 doc/xls）
       eq(0, [0x37, 0x7A, 0xBC, 0xAF]) || // 7z
+      eq(0, [0x4D, 0x5A]) || // MZ（Windows PE/exe）
       (b.length >= 3 && eq(0, [0x52, 0x61, 0x72])); // Rar!
 }
 
@@ -769,6 +773,18 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
         return;
       }
       final text = utf8.decode(bytes, allowMalformed: true);
+      // NUL 兜底嗅探（preview-kind-1 同款）：无扩展名/魔数未收录的
+      // 二进制误入文本分支时前 1KiB 大概率有 NUL——转存打开而非乱码页。
+      if (looksLikeBinaryText(text)) {
+        if (bytes.isEmpty) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('该产物没有可读的内容')),
+          );
+          return;
+        }
+        await _saveAndOpenArtifact(name, bytes);
+        return;
+      }
       if (text.isEmpty) {
         messenger.showSnackBar(
           const SnackBar(content: Text('该产物没有可读的文本内容')),
@@ -780,8 +796,13 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
           : name;
       // html 嗅探正则锚定文首（此前 `|` 优先
       // 级让正文任意位置的 <html 字样也会误进 WebView）。
+      // 产物类型优先用 kind 字段（2026-11-15 真机实证：交付报告类产物
+      // 标题常无扩展名——「路侧终端日志工具 GUI 交付报告 markdown·v1」
+      // 单靠 isMarkdownPath 会错进纯文本页）。
+      final artifactKind = '${artifact['kind'] ?? ''}'.toLowerCase();
       if (RegExp(r'^\s*(<!doctype html|<html)', caseSensitive: false)
-          .hasMatch(text)) {
+              .hasMatch(text) ||
+          artifactKind == 'html') {
         Navigator.of(context).push(
           MaterialPageRoute(
             builder: (_) => HtmlPreviewPage(
@@ -790,7 +811,7 @@ class _WorkflowRunDetailPageState extends State<WorkflowRunDetailPage> {
             ),
           ),
         );
-      } else if (isMarkdownPath(name) &&
+      } else if ((isMarkdownPath(name) || artifactKind == 'markdown') &&
           text.length <= markdownPreviewMaxChars) {
         // preview-kind-1：markdown 产物进渲染页（样式与对话消息同源）。
         Navigator.of(context).push(

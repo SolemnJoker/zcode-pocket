@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zcode_pocket/core/l10n.dart';
 import 'package:zcode_pocket/core/theme.dart';
+import 'package:zcode_pocket/ui/file_preview.dart' show looksLikeBinaryText;
 import 'package:zcode_pocket/ui/workflow_runs_page.dart';
 
 /// 1×1 红色像素 PNG（魔数齐全，Image.memory 可真解码）。
@@ -160,6 +161,27 @@ void main() {
       final r = await run('big.png', png);
       expect(r.oversized, isFalse, reason: '修复前红：读尽仍报过大');
       expect(r.bytes.length, png.length);
+    });
+
+    test('transfer-1：无扩展名 exe（MZ 头）识别为二进制（真机实证回归）', () async {
+      // 「单文件 exe（release 构建，11.9 MB）」产物标题无扩展名——
+      // 缺 MZ 嗅探时 exe 被当文本渲染成乱码页（2026-11-15 真机抓包）。
+      final exe = <int>[
+        0x4D, 0x5A, 0x90, 0x00, // MZ\0\0
+        ...List<int>.filled(3 * 1024 * 1024, 0x41),
+      ];
+      final r = await run('单文件 exe（release 构建，11.9 MB）', exe);
+      expect(r.isBinary, isTrue, reason: '修复前红：MZ 未收录，走文本分支');
+      expect(r.isImage, isFalse);
+      expect(r.oversized, isFalse);
+      expect(r.bytes.length, exe.length);
+    });
+
+    test('transfer-1：NUL 兜底嗅探（未知魔数的二进制不进文本页）', () {
+      // 无扩展名、魔数未收录（如自定义格式）但前 1KiB 含 NUL——
+      // 文本分支的 looksLikeBinaryText 兜底应拒绝渲染。
+      expect(looksLikeBinaryText('MZ\x00\x01binary-ish'), isTrue);
+      expect(looksLikeBinaryText('纯文本内容没有 NUL'), isFalse);
     });
 
     test('图片 >16MiB 且仍有后续 → 超限标志', () async {
